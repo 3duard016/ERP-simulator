@@ -1,0 +1,88 @@
+[Plan de Trabajo] Listas de Precios en Cascada, Valuación de Costos e Integración del Esquema - <MATRÍCULA>
+Información del Alumno
+Matrícula: <181884>
+Tema General del Proyecto: ERP Inteligente — Módulo de Inventario
+Nombre del Componente
+Sección 9 del esquema erp (listas de precios y descuentos) con su actualización en cascada; funciones de valuación FIFO, costo promedio móvil y costo estándar; e integración del esquema completo (orden de ejecución, datos semilla, roles / permisos y CI).
+Problema que Resolverá
+- price_list tiene base_list_id y factor, pero ninguna función propaga los precios: cambiar la lista base obliga a actualizar cada lista derivada a mano. Además, el CHECK solo evita que una lista sea base de sí misma, no los ciclos A → B → A.
+- cost_layer, item.avg_cost e item.standard_cost existen, pero no hay lógica que consuma capas FIFO ni que recalcule el promedio: no se puede saber el costo de venta ni el valor del inventario.
+- Los permisos de RN03 a nivel de rol están comentados.
+- No hay datos semilla ni un pipeline que cree el esquema y corra las pruebas de los 5 integrantes.
+Objetivo
+Que el agente de precios y rentabilidad consulte precio vigente, descuento y margen real (precio − costo valuado) por artículo, y que todo el esquema se cree, se pueble y se pruebe con un solo comando en GitHub Actions.
+Datos que Gestionará
+- Productos (precio por lista)
+- Listas de precios y factores
+- Grupos de descuento por artículo y por socio
+- Capas de costo y costo promedio
+- Datos semilla del módulo completo
+Diseño Propuesto
+Entidades
+- price_list, item_price, discount_group, discount_group_item, discount_group_partner (sección 9 del schema)
+- Nueva columna item_price.is_manual BOOLEAN (precio que no se sobrescribe en la cascada)
+- Nuevas columnas discount_group.valid_from / valid_to
+Relaciones
+- price_list N — 1 price_list (jerarquía de listas)
+- price_list 1 — N item_price N — 1 item
+- discount_group N — M item y N — M business_partner
+- sales_order.price_list_id → price_list
+- La valuación usa cost_layer e item y la llama sp_post_inventory_movement (182134)
+Restricciones
+- Ya en el schema: factor > 0, price >= 0, discount_pct entre 0 y 100
+- Nueva (trigger con WITH RECURSIVE): sin ciclos entre listas
+- Nueva: CHECK (valid_to IS NULL OR valid_to >= valid_from)
+Reglas de Integridad
+- sp_recalc_price_list(p_price_list_id): precio hijo = precio base × factor, propagado recursivamente; respeta is_manual
+- fn_issue_cost(p_item_code, p_warehouse_id, p_qty) RETURNS NUMERIC según item.costing_method:
+  - FIFO: consume cost_layer en orden de received_at
+  - PROMEDIO_MOVIL: avg_cost vigente
+  - ESTANDAR: standard_cost
+- fn_receipt_cost(...): en cada entrada crea la capa FIFO y recalcula avg_cost = (q₀·c₀ + q₁·c₁) / (q₀ + q₁)
+- Roles: erp_app sin UPDATE / DELETE sobre documentos y asientos (bloque de permisos del schema)
+Consultas Esperadas
+- Precio final de un artículo para un cliente (lista + descuento vigente)
+- Margen por artículo: precio vs. costo valuado
+- Valor del inventario por almacén y por método de costeo
+- Productos más vendidos y su margen
+- Artículos con precio por debajo del costo (alerta para el agente)
+Tecnologías a Utilizar
+- PostgreSQL
+- SQL / PL/pgSQL
+- Python (pytest)
+- GitHub
+- GitHub Actions (servicio PostgreSQL)
+Plan de Actividades
+Fase 1. Análisis
+Revisar los requerimientos de precios y de valuación; acordar con 182134 la firma de las funciones de costo.
+Fase 2. Modelado
+Diagrama ER de precios y descuentos; ejemplos numéricos de FIFO y promedio móvil que servirán como pruebas.
+Fase 3. Implementación
+- Nuevo Inventario/pricing_<MATRÍCULA>.sql (sección 9, cascada y validación de ciclos)
+- Nuevo Inventario/costing_<MATRÍCULA>.sql (funciones de valuación)
+- Nuevos Inventario/00_run_all.sql, Inventario/99_seeds.sql, Inventario/roles_<MATRÍCULA>.sql y .github/workflows/ci_inventario_db_<MATRÍCULA>.yml
+- Commits previstos:
+  - feat(database): create price list and discount model
+  - feat(sql): add cascading price list recalculation
+  - feat(sql): add fifo, moving average and standard costing
+  - ci(database): build erp schema and run inventory tests on postgres
+Fase 4. Pruebas
+- Cascada: cambiar la lista base actualiza las hijas con su factor; los precios manuales no cambian; un ciclo se rechaza
+- FIFO: entradas 10 @ $5 y 10 @ $7, salida de 15 → $85
+- Promedio móvil: mismas entradas → avg_cost = $6; salida de 15 → $90
+- CI: esquema + seeds + pruebas de todo el equipo en verde
+- Commit: test(database): validate pricing cascade and costing methods
+Fase 5. Documentación
+Diagrama ER, explicación de cada método de costeo, guía para ejecutar el esquema y evidencias de CI en Inventario/docs/<MATRÍCULA>/.
+Entregables
+- Scripts SQL (sección 9, valuación, orquestador, seeds y roles)
+- Modelo entidad-relación
+- Consultas SQL de precios, margen y valor de inventario
+- Workflow de GitHub Actions
+- Evidencias y documentación
+Criterios de Aceptación
+- Modelo implementado
+- Cascada de precios y métodos de costeo funcionales
+- Esquema completo ejecutándose en CI
+- Pruebas documentadas y evidencias adjuntas
+- Pull Request generado de feature/<MATRÍCULA> hacia development
